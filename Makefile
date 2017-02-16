@@ -37,6 +37,7 @@ DEFS = -D_$(CPU) -D_$(OS)
 SANYO_HD5400 = n
 AVT_CAM = y
 UVC_CAM = y
+GST_CAM = y
 FWINDOW = n
 GLFW_WINDOW = y
 F_ORB_SLAM = y
@@ -48,14 +49,18 @@ FDIR = $(CUR_DIR)/filter
 CDIR = $(CUR_DIR)/channel
 UDIR = $(CUR_DIR)/util
 RCMD_DIR = $(CUR_DIR)/rcmd
-INC_CV_DIR = /usr/local/include
-LIB_CV_DIR = /usr/local/lib
+INC_CV_DIR = $(CUR_DIR)/opencv/include
+LIB_CV_DIR = $(CUR_DIR)/opencv/lib
 INC_PVAPI_DIR = $(CUR_DIR)/PvAPI/include
 LIB_PVAPI_DIR = $(CUR_DIR)/PvAPI/lib
 INC_GLFW_DIR = $(CUR_DIR)/GLFW/include
 LIB_GLFW_DIR = $(CUR_DIR)/GLFW/lib
 INC_EIGEN_DIR = /usr/local/include/eigen3
 INC_MAVLINK = $(CUR_DIR)/mavlink/include_1.0/ardupilotmega
+INC_GST = /usr/include/gstreamer-1.0
+LIB_GST = /usr/lib/arm-linux-gnueabihf/gstreamer-1.0
+INC_GLIB = /usr/include/glib-2.0
+INC_GLIB_CONFIG = /usr/lib/arm-linux-gnueabihf/glib-2.0/include
 INC_CAFFE_DIR = $(CUR_DIR)/caffe/include
 LIB_CAFFE_DIR = $(CUR_DIR)/caffe/lib
 INC_CUBLAS_DIR = /usr/local/cuda-6.5/targets/armv7-linux-gnueabihf/include
@@ -78,7 +83,7 @@ FILTER = f_base f_nmea f_cam f_camcalib f_imgshk f_misc \
 	f_wp_manager f_glfw_stereo_view f_stereo f_aws3_com f_aws3_ui f_state_estimator
 
 # listing channels
-CHANNEL = ch_base ch_image ch_aws1_ctrl ch_obj ch_aws3
+CHANNEL = ch_base ch_image ch_aws1_ctrl ch_obj ch_aws3 ch_state
 
 # listing utilities
 UTIL =  c_clock c_imgalign aws_nmea aws_nmea_gps aws_nmea_ais c_ship aws_coord aws_serial aws_sock aws_vobj aws_vlib aws_stdlib 
@@ -97,6 +102,7 @@ ifeq ($(BOARD), zed)
 	FWINDOW = n
 	GLFW_WINDOW = n
 	F_ORB_SLAM = n
+	GST_CAM = n
 	#OFLAGS += -mfloat-abi=hard
 endif
 
@@ -112,7 +118,11 @@ ifeq ($(BOARD), jtx)
 	CPU 	= arm
 	INC_CV_DIR = /usr/local/include
 	LIB_CV_DIR = /usr/local/lib
-	INC_EIGEN_DIR = /usr/include/eigen3
+	INC_EIGEN_DIR = /usr/local/include/eigen3
+endif
+
+ifeq ($(BOARD), pc)
+	GST_CAM = n
 endif
 
 ################################################# cpu specific compiler option
@@ -171,20 +181,6 @@ ifeq ($(F_ORB_SLAM), y)
 
 endif
 
-ifeq ($(CAFFE),y)
-	MODS += caffe_proto
-	CAFFE_PROTO_OBJ = $(addprefix $(CAFFE_PROTO_DIR)/, $(addsuffix .o,$(CAFFE_PROTO)))
-	FILTER += f_caffe
-	UTIL += selective_search selective_search_edge selective_search_vertex
-	INC += -I$(INC_CAFFE_DIR) -I$(INC_CUBLAS_DIR) -I$(INC_GFLAGS_DIR) -I$(INC_GLOG_DIR)
-	LIB += -L$(LIB_CAFFE_DIR) -lcaffe -lprotobuf -lopencv_ximgproc
-	LIB += -L$(LIB_BOOST_DIR) -lboost_system -lboost_thread -lboost_filesystem -lboost_chrono -lboost_date_time -lboost_atomic
-	DEFS += -DDNN
-
-	CAFFE_PROTO = caffe.pb
-	CAFFE_PROTO_DIR = $(INC_CAFFE_DIR)/caffe/proto
-endif
-
 ###################################################### f_net_cam configuration
 ifeq ($(SANYO_HD5400),y)
 	INC += -I$(CUR_DIR)/curl/include  -I$(CUR_DIR)/3rdparty/include 
@@ -207,10 +203,33 @@ ifeq ($(UVC_CAM),y)
 	DEFS += -DUVC_CAM
 endif
 
+ifeq ($(GST_CAM),y)
+	INC += -I$(INC_GST) -I$(INC_GLIB) -I$(INC_GLIB_CONFIG)
+	LIB += -L$(LIB_GST) -lgstreamer-1.0 -lgobject-2.0 -lglib-2.0 -lgstapp-1.0
+	DEFS += -DGST_CAM
+	FILTER += f_gst_cam
+endif
+
 ######################################################## f_window configutaion
 ifeq ($(FWINDOW), y)
 	DEFS += -DFWINDOW
 	FILTER += f_window
+endif
+
+######################################################## f_caffe configuration
+
+ifeq ($(CAFFE),y)
+	MODS += caffe_proto
+	CAFFE_PROTO_OBJ = $(addprefix $(CAFFE_PROTO_DIR)/, $(addsuffix .o,$(CAFFE_PROTO)))
+	FILTER += f_caffe
+	UTIL += selective_search selective_search_edge selective_search_vertex
+	INC += -I$(INC_CAFFE_DIR) -I$(INC_CUBLAS_DIR) -I$(INC_GFLAGS_DIR) -I$(INC_GLOG_DIR)
+	LIB += -L$(LIB_CAFFE_DIR) -lcaffe -lprotobuf -lopencv_ximgproc
+	LIB += -L$(LIB_BOOST_DIR) -lboost_system -lboost_thread -lboost_filesystem -lboost_chrono -lboost_date_time -lboost_atomic
+	DEFS += -DDNN
+
+	CAFFE_PROTO = caffe.pb
+	CAFFE_PROTO_DIR = $(INC_CAFFE_DIR)/caffe/proto
 endif
 
 ################################################ Board specific linker options
@@ -267,7 +286,7 @@ aws: $(OBJS) $(MODS)
 	$(CC) $(FLAGS) $(OBJS) $(addprefix $(FDIR)/,$(FOBJS)) $(addprefix $(CDIR)/,$(COBJS)) $(addprefix $(UDIR)/,$(UOBJS)) $(ORB_SLAM_OBJS) $(G2O_OBJS) $(DBOW2_OBJS) -o $(EXE) $(LIB)
 
 log2txt: util/log2txt.o factory.o command.o c_aws.o filter channel util orb_slam g2o DBoW2
-	$(CC) $(FLAGS) $(addprefix $(FDIR)/,$(FOBJS)) $(addprefix $(CDIR)/,$(COBJS)) $(addprefix $(UDIR)/,$(UOBJS)) $(ORB_SLAM_OBJS) $(G2O_OBJS) $(DBOW2_OBJS) command.o c_aws.o factory.o util/log2txt.o -o log2txt $(LIB)
+	$(CC) $(FLAGS) $(addprefix $(FDIR)/,$(FOBJS)) $(addprefix $(CDIR)/,$(COBJS)) $(addprefix $(UDIR)/,$(UOBJS)) $(ORB_SLAM_OBJS) $(G2O_OBJS) $(DBOW2_OBJS)  command.o c_aws.o factory.o util/log2txt.o -o log2txt $(LIB)
 
 t2str: util/t2str.o util/c_clock.o
 	$(CC) util/t2str.o util/c_clock.o -o t2str
@@ -278,7 +297,6 @@ t2str: util/t2str.o util/c_clock.o
 .PHONY: orb_slam
 .PHONY: g2o
 .PHONY: DBoW2
-.PHONY: caffe_proto
 .PHONY: clean
 
 filter: 

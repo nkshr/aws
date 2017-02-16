@@ -54,6 +54,7 @@ f_aws3_ui::f_aws3_ui(const char * name) :f_glfw_window(name), m_ch_param(NULL), 
 	register_fpar("ch_state", (ch_base**)&m_ch_state, typeid(ch_aws3_state).name(), "Channel of AWS3 state.");
 	register_fpar("ch_cmd", (ch_base**)&m_ch_cmd, typeid(ch_aws3_cmd).name(), "Channel of AWS3 command.");
 	register_fpar("ch_img", (ch_base**)&m_ch_img, typeid(ch_image_ref).name(), "Streaming channel");
+	register_fpar("ch_obj", (ch_base**)&m_ch_obj, typeid(ch_obj).name(), "Objects channel");
 	register_fpar("verb", &m_verb, "Debug mode.");
 	register_fpar("nx", &m_nx, "Neutral in x direction.");
 	register_fpar("ny", &m_ny, "Neutral in y direction.");
@@ -144,7 +145,7 @@ bool f_aws3_ui::proc()
   glEnable(GL_DEPTH_TEST);
   glfwSwapBuffers(pwin());
   glfwPollEvents();
-
+  
   return true;
 }
 
@@ -196,6 +197,7 @@ void f_aws3_ui::draw_overlay()
 	draw_alt();
 	draw_batt();
 	draw_thr();
+	draw_rc();
 }
 
 void f_aws3_ui::draw_batt()
@@ -541,3 +543,39 @@ void f_aws3_ui::draw_txt()
 
 }
 
+
+void f_aws3_ui::draw_rc(){
+  m_ch_obj->lock();
+  m_ch_obj->begin();
+  while(!m_ch_obj->is_end()){
+    c_vobj * vobj = (c_vobj*)m_ch_obj->cur();
+    long long t;
+    Rect rc;
+    Mat tmp;
+    const f_base * pfsrc;
+    bool manual;
+    vobj->get(t, rc, tmp, pfsrc, manual);
+    
+    long long timg;
+    Mat img = m_ch_img->get_img(timg);
+    float xscale = m_sz_win.width / (float)img.cols;
+    float yscale = m_sz_win.height / (float)img.rows;
+    int hcols = img.cols * 0.5;
+    int hrows = img.rows * 0.5;
+    
+    cout << "rc : " << rc << endl;
+    float x1, y1, x2, y2;
+    x1 = (rc.x - hcols) * xscale * m_ixscale;
+    y1 = -(rc.y - hrows) * yscale * m_iyscale;
+    x2 = (rc.x + rc.width - hcols) * xscale * m_ixscale;
+    y2 = -(rc.y + rc.height - hrows) * xscale * m_iyscale;
+    float r = 1.f;
+    float g = 0.f;
+    float b = 0.f;
+    cout << x1 << ", " << y1 << ", " << x2 << ", " << y2 << endl;
+    drawGlSquare2Df(x1, y1, x2, y2, r, g, b, 1, 1.);
+
+    m_ch_obj->next();
+  }
+  m_ch_obj->unlock();
+}

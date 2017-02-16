@@ -7,6 +7,7 @@
 #include "f_glfw_window.h"
 
 #include "../channel/ch_aws3.h"
+#include "../channel/ch_obj.h"
 #include "../util/aws_jpad.h"
 
 class f_aws3_ui : public f_glfw_window
@@ -16,6 +17,7 @@ private:
 	ch_aws3_state * m_ch_state;
 	ch_aws3_cmd * m_ch_cmd;
 	ch_image_ref * m_ch_img;
+	ch_obj * m_ch_obj;
 	bool m_verb;
 	int m_js_id;
 	s_jc_u3613m m_js;
@@ -29,7 +31,8 @@ private:
 	void draw_att();
 	void draw_alt();
 	void draw_txt();
-	
+	void draw_rc();
+
 	short m_nx, m_ny, m_nz, m_nr;
 public:
 	f_aws3_ui(const char * name);

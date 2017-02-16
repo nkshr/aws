@@ -378,6 +378,19 @@ public:
 			m_src = EOS_VAUTO;
 		}
 	}
+
+	void get(long long &t, Rect & rc, Mat & tmp, const f_base *& pfsrc, bool &manual){
+	  t = m_rc.t;
+	  rc = m_rc.rc;
+	  tmp = m_rc.tmp.clone();
+	  pfsrc = m_rc.pfsrc;
+	  if(m_src == EOS_VMAN){
+	    manual = true;
+	  }
+	  else{
+	    manual = false;
+	  }
+	}
 };
 
 class c_obst : public c_obj
