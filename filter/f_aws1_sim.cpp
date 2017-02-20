@@ -17,24 +17,22 @@ using namespace std;
 #include <opencv2/opencv.hpp>
 using namespace cv;
 
+#include "f_aws1_ctrl.h"
+
 #include "../channel/ch_aws1_ctrl.h"
 #include "../channel/ch_state.h"
 #include "f_aws1_sim.h"
 
-s_aws1_mod::s_aws1_state::s_aws1_state(): t(0), cog(0), sog(0){
+s_aws1_mod::s_aws1_state::s_aws1_state(): cog(0), sog(0), t(0){
   
 }
 
-s_aws1_mod::s_aws1_mod(): res(256){
+const int s_aws1_mod::res = 256;
+const int s_aws1_mod::num_cells = res*res*res;
+s_aws1_mod::s_aws1_mod(){
 }
 
 s_aws1_mod::~s_aws1_mod(){
-  for(int i = 0; i < res; ++i){
-    for(int j = 0; j < res; ++j){
-      delete [] table[i][j];
-    }
-    delete [] table[i];
-  }
   delete [] table;
 }
 
@@ -43,12 +41,11 @@ void s_aws1_mod::get_state(const unsigned char meng, const unsigned char seng, c
 }
 
 void s_aws1_mod::init(){
-  const int sz = 0xff;
-  table = new s_aws1_state**[sz];
-  for(int i = 0; i < sz; ++i){
-    table[i] = new s_aws1_state*[sz]; 
-    for(int j = 0; j < sz; ++j){
-      table[i][j] = new s_aws1_state[sz];
+  table = new s_aws1_state**[num_cells];
+  for(int i = 0; i < res; ++i){
+    table[i] = new s_aws1_state*[num_cells];
+    for(int j = 0; j < res; ++j){
+      table[i][j] = new s_aws1_state[res];
     }
   }
 }
@@ -56,13 +53,75 @@ void s_aws1_mod::init(){
 
 void s_aws1_mod::update(const unsigned char meng, const unsigned char seng, const unsigned char rud,
 	    const float cog, const float sog, const long long t){
-  
+  s_aws1_state &state = table[meng][seng][rud];
+  float s0 = (float)t / (float)(t + state.t);
+  float s1 = 1.f - s0;
+  state.cog = s0 * state.cog + s1 * cog;
+  state.sog = s0 * state.sog + s1 * sog;
+  state.t += t;
+}
+
+void s_aws1_mod::interpolate_table(){
+  for(int i = 0; i < res; ++i){
+    for(int j = 0; j < res; ++j){
+      for(int k = 0; k < res; ++k){
+	s_aws1_state * state = &table[i][j][k];
+	if(state->t == 0){
+	  const s_aws1_state nstate = get_nearest_cell(i, j, k);
+	  state->cog = nstate.cog;
+	  state->sog = nstate.sog;
+	}
+      }
+    }
+  }
+}
+
+s_aws1_mod::s_aws1_state& s_aws1_mod::get_nearest_cell(const int meng, const int seng, const int rud){
+  float dmin = FLT_MAX; //maximum distance
+  int min_meng = 0;
+  int min_seng = 0;
+  int min_rud = 0;
+  const int res2 = res * res;
+  for(int i = 0; i < res; ++i){
+    for(int j = 0; j < res; ++j){
+      for(int k = 0; k < res; ++k){
+	s_aws1_state * state = &table[i][j][k];
+	float d = FLT_MAX;
+	if(state->t)
+	  d = (float)sqrt(pow(i - meng, 2.0) + pow(j - seng, 2.0) + pow(k - rud, 2.0));
+	if(d < dmin ){
+	  min_meng = i;
+	  min_seng = j;
+	  min_rud = k;
+	}
+      }
+    }
+  }
+  return table[min_meng][min_seng][min_rud];
 }
 
 bool s_aws1_mod::read(const char * fname){
+  FILE * pf = fopen(fname, "rb");
+  if(!pf)
+    return false;
+
+  int sz = 0;
+  for(int i = 0; i < res; ++i){
+    for(int j = 0; j < res; ++j){
+      for(int k = 0; k < res; ++k){
+	s_aws1_state * state = &table[i][j][k];
+	sz += fread(&(state->cog), sizeof(float), 1, pf);
+	sz += fread(&(state->sog), sizeof(float), 1, pf);
+	sz += fread(&(state->t), sizeof(long long), 1, pf);      
+      }
+    }
+  }
+  fclose(pf);
 }
 
 bool s_aws1_mod::write(const char * fname){
+  interpolate_table();
+
   FILE * pf = fopen(fname, "wb");
   if(!pf)
     return false;
@@ -70,38 +129,108 @@ bool s_aws1_mod::write(const char * fname){
   int sz = 0;
   for(int i = 0; i < res; ++i){
     for(int j = 0; j < res; ++j){
-      sz += fwrite(table[i][j], sizeof(s_aws1_state), sizeof(table[i][j]), pf);
+      for(int k = 0; k < res; ++k){
+	s_aws1_state * state = &table[i][j][k];
+	sz += fwrite(&(state->cog), sizeof(float), 1, pf);
+	sz += fwrite(&(state->sog), sizeof(float), 1, pf);
+	sz += fwrite(&(state->t), sizeof(long long), 1, pf);      
+      }
     }
   }
-  
-  //Above code may be good, but if it is not so, following code should be recmommended.
-  // for(int i = 0; i < res; ++i){
-  //   for(int j = 0; j < res; ++j){
-  //     for(int k = 0; k < res; ++k){
-  // 	s_aws1_state * aws1_state = &table[i][j][k];
-  // 	sz += fwrite(&(aws1_state->t), sizeof(long long), 1, pf);
-  // 	sz += fwrite(&(aws1_state->cog), sizeof(float), 1, pf);
-  // 	sz += fwrite(&(aws1_state->sog), sizeof(float), 1, pf);
-  //     }
-  //   }
-  // }
-  if(sz != sizeof(s_aws1_state)*256*256*256)
+
+  if(sz != sizeof(s_aws1_state)*pow(res, 3.0))
     return false;
   fclose(pf);
   return true;
 }
 
-f_aws1_sim::f_aws1_sim(const char * fname): f_base(fname){
+void f_aws1_sim::get_inst()
+{
 
+  s_aws1_ctrl_inst inst;
+  if(m_ch_ctrl_ui){
+    m_ch_ctrl_ui->get(inst);
+  }
+
+  m_ctrl_stat.tcur = inst.tcur;
+  m_ctrl_stat.ctrl_src = inst.ctrl_src;
+
+  switch(m_ctrl_stat.ctrl_src){
+  case ACS_UI:
+    m_ctrl_stat.rud_aws = inst.rud_aws;
+    m_ctrl_stat.meng_aws = inst.meng_aws;
+    m_ctrl_stat.seng_aws = inst.seng_aws;
+    break;
+  case ACS_AP1:
+    if(m_ch_ctrl_ap1){
+      m_ch_ctrl_ap1->get(inst);
+      m_ctrl_stat.rud_aws = inst.rud_aws;
+      m_ctrl_stat.meng_aws = inst.meng_aws;
+      m_ctrl_stat.seng_aws = inst.seng_aws;
+    }else{
+      cerr << "In " << m_name << ", ";
+      cerr << "No autopilot channel 1 is connected" << endl;
+    }
+    break;
+  case ACS_AP2:
+    if(m_ch_ctrl_ap2){
+      m_ch_ctrl_ap2->get(inst);
+      m_ctrl_stat.rud_aws = inst.rud_aws;
+      m_ctrl_stat.meng_aws = inst.meng_aws;
+      m_ctrl_stat.seng_aws = inst.seng_aws;
+    }else{
+      cerr << "In " << m_name << ", ";
+      cerr << "No autopilot channel 2 is connected" << endl;
+    }
+    break;
+  }
+}
+
+void f_aws1_sim::map_stat()
+{
+  m_ctrl_stat.rud = map_oval(m_ctrl_stat.rud_aws, 
+			   0xff, 0x7f, 0x00, 
+			   m_ctrl_stat.rud_max, m_ctrl_stat.rud_nut, m_ctrl_stat.rud_min);
+  m_ctrl_stat.meng = map_oval(m_ctrl_stat.meng_aws, 
+			    0xff, 0x7f + 0x19, 0x7f, 0x7f - 0x19, 0x00,
+			    m_ctrl_stat.meng_max, m_ctrl_stat.meng_nuf, m_ctrl_stat.meng_nut, 
+			    m_ctrl_stat.meng_nub, m_ctrl_stat.meng_min);  
+  m_ctrl_stat.seng = map_oval(m_ctrl_stat.seng_aws, 
+			    0xff, 0x7f + 0x19, 0x7f, 0x7f - 0x19, 0x00,
+			    m_ctrl_stat.seng_max, m_ctrl_stat.seng_nuf, m_ctrl_stat.seng_nut, 
+			    m_ctrl_stat.seng_nub, m_ctrl_stat.seng_min);
+}
+
+f_aws1_sim::f_aws1_sim(const char * fname): f_base(fname){
 }
 
 bool f_aws1_sim::init_run(){
   //read a model specified by m_fmod
-  
+  if(!m_mod.read(m_fmod)){
+    cerr << __PRETTY_FUNCTION__ << endl;
+    cerr << "Error : Couldn't read " << m_fmod << "." << endl;
+    return false;
+  }
   return true;
 }
 
 bool f_aws1_sim::proc(){
+  if(!m_ch_ctrl_stat){
+    cerr << __PRETTY_FUNCTION__ << endl;
+    cerr << "Error : ch_state is not specified." << endl;
+    return false;
+  }
+  
+  get_inst();
+  map_stat();
+  s_aws1_mod::s_aws1_state * state = &m_mod.table[m_ctrl_stat.meng_aws][m_ctrl_stat.seng_aws][m_ctrl_stat.rud_aws];
+
+  
+  long long t = get_time();
+  float cog = state->cog;
+  float sog = state->sog;
+
+  m_ch_state->set_velocity(cog, sog, t);
   
   return true;
 }
@@ -114,7 +243,11 @@ f_aws1_mod::f_aws1_mod(const char * fname): f_aws1_mod(fname){
 
 bool f_aws1_mod::init_run(){
   //read model from a file specified by m_fmod.
-  
+  if(!m_mod.read(m_fmod)){
+    cerr << __PRETTY_FUNCTION__ << endl;
+    cerr << "Error : Couldn't read " << m_fmod << "." << endl;
+    return false;
+  }
   return true;
 }
 

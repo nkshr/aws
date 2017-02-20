@@ -22,11 +22,13 @@ struct s_aws1_mod{
   int imid;
   int imnut;
   int isnut;
-  const int res; // table resolution 
+  const static int res; //table resolution along each axises 
+  const static int num_cells; //number of celss in a table
+
   struct s_aws1_state{
-    long long t; //observation time
     float cog;  //course over ground
     float sog; //spped over ground
+    long long t; //observation time
 
     s_aws1_state();
     //s_aws1_state(const s_aws1_state &state) = delete;
@@ -44,6 +46,9 @@ struct s_aws1_mod{
   void update(const unsigned char meng, const unsigned char seng, const unsigned char rud,
 	      const float cog, const float sog, const long long t);
 
+  void interpolate_table();
+  s_aws1_state& get_nearest_cell(const int meng, const int seng, const int rud);
+
   bool write(const char * fname);
   bool read(const char * fname);
 };
@@ -52,7 +57,20 @@ class f_aws1_sim: public f_base
 {
  private:
   char * m_fmod;
+  
+  s_aws1_mod m_mod;
+  s_aws1_ctrl_stat m_ctrl_stat;
 
+  ch_aws1_ctrl_inst * m_ch_ctrl_ui;
+  ch_aws1_ctrl_inst * m_ch_ctrl_ap1;
+  ch_aws1_ctrl_inst * m_ch_ctrl_ap2;
+  
+  ch_aws1_ctrl_stat * m_ch_ctrl_stat; 
+  ch_state * m_ch_state;
+
+  void get_inst();
+
+  void map_stat();
  public:
   f_aws1_sim(const char * fname);
   
@@ -61,7 +79,6 @@ class f_aws1_sim: public f_base
   virtual void destroy_run();
   
   virtual bool proc();
-    
 };
 
 class f_aws1_mod: public f_base 
@@ -79,7 +96,9 @@ class f_aws1_mod: public f_base
   
   long long m_ost; //observation start time
   long long m_th_op; //threshold for a observation period
+
   s_aws1_mod m_mod;
+
   //s_aws1_ctrl_inst m_ref_ctrl_inst;
   s_aws1_ctrl_stat m_ref_ctrl_stat;
 
