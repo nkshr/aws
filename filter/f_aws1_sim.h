@@ -26,7 +26,7 @@ struct s_aws1_mod{
   const static int num_cells; //number of celss in a table
 
   struct s_aws1_state{
-    float cog;  //course over ground
+    float ang_vel;  //angular velocity  over ground
     float sog; //spped over ground
     long long t; //observation time
 
@@ -44,13 +44,18 @@ struct s_aws1_mod{
 
   void get_state(const unsigned char meng, const unsigned char seng, const unsigned char rud);
   void update(const unsigned char meng, const unsigned char seng, const unsigned char rud,
-	      const float cog, const float sog, const long long t);
+	      const float ang_vel, const float sog, const long long t);
 
   void interpolate_table();
   s_aws1_state& get_nearest_cell(const int meng, const int seng, const int rud);
 
   bool write(const char * fname);
   bool read(const char * fname);
+
+  bool write_sog_csv(const char * fname, const unsigned char seng);
+  bool write_ang_vel_csv(const char * fname, const unsigned char seng);
+  bool write_ot_csv(const char * fname, const unsigned char seng);
+
 };
 
 class f_aws1_sim: public f_base 
@@ -84,14 +89,21 @@ class f_aws1_sim: public f_base
 class f_aws1_mod: public f_base 
 {
  private:
-  bool m_bwrite;
+  bool m_bwrite_mod;
+  bool m_bwrite_ang_vel_csv;
+  bool m_bwrite_sog_csv;
+  bool m_bwrite_ot_csv;
+  bool m_binterpolate;
+  bool m_bverb;
 
-  char * m_fmod;
-
-  //cog and sog are supposed to be constant with respect to following parameters.
-  float m_max_dcog;
+  char m_fmod[1024];
+  char m_fang_vel_csv[1024];
+  char m_fsog_csv[1024];
+  char m_fot_csv[1024];
+  //angular velocity and sog are supposed to be constant with respect to following parameters.
+  float m_max_dang_vel;
   float m_max_dsog;
-  float m_ref_cog;
+  float m_ref_ang_vel;
   float m_ref_sog;
   
   long long m_ost; //observation start time
@@ -99,10 +111,8 @@ class f_aws1_mod: public f_base
 
   s_aws1_mod m_mod;
 
-  //s_aws1_ctrl_inst m_ref_ctrl_inst;
   s_aws1_ctrl_stat m_ref_ctrl_stat;
 
-  //ch_aws1_ctrl_inst * m_ch_ctrl_inst;
   ch_aws1_ctrl_stat * m_ch_ctrl_stat;
   ch_state * m_ch_state;
   
