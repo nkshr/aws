@@ -19,49 +19,59 @@
 #include "f_base.h"
 
 struct s_aws1_mod{
-  int imid;
-  int imnut;
-  int isnut;
-  const static int res; //table resolution along each axises 
-  const static int num_cells; //number of celss in a table
+  int res_meng;
+  int res_rud;
 
   struct s_aws1_state{
     float ang_vel;  //angular velocity  over ground
-    float sog; //spped over ground
-    long long t; //observation time
+    float sog; //speed over ground
+    long long ot; //observation time 
 
     s_aws1_state();
     //s_aws1_state(const s_aws1_state &state) = delete;
   };
 
-  s_aws1_state ***table;
+  s_aws1_state **table;
 
   s_aws1_mod();
   s_aws1_mod(const s_aws1_mod &mod) = delete;
   ~s_aws1_mod();
 
+  s_aws1_mod::s_aws1_state** allocate2d();
   void init();
 
-  void get_state(const unsigned char meng, const unsigned char seng, const unsigned char rud);
-  void update(const unsigned char meng, const unsigned char seng, const unsigned char rud,
-	      const float ang_vel, const float sog, const long long t);
+  void update(const unsigned char meng, const unsigned char rud,
+	      const float ang_vel, const float sog, const long long ot);
 
   void interpolate_table();
-  s_aws1_state& get_nearest_cell(const int meng, const int seng, const int rud);
+  s_aws1_state& get_nearest_cell(const int meng, const int rud);
+
+  //void reshape();
+  
+  void destroy();
 
   bool write(const char * fname);
   bool read(const char * fname);
 
-  bool write_sog_csv(const char * fname, const unsigned char seng);
-  bool write_ang_vel_csv(const char * fname, const unsigned char seng);
-  bool write_ot_csv(const char * fname, const unsigned char seng);
+  bool write_sog_csv(const char * fname);
+  bool write_ang_vel_csv(const char * fname);
+  bool write_ot_csv(const char * fname);
 
+  s_aws1_state get_state(const unsigned char meng, const unsigned char rud);
 };
 
 class f_aws1_sim: public f_base 
 {
  private:
-  char * m_fmod;
+  bool m_bwrite_ang_vel_csv;
+  bool m_bwrite_sog_csv;
+  bool m_bwrite_ot_csv;
+  bool m_binterpolate;
+
+  char m_fmod[1024];
+  char m_fang_vel_csv[1024];
+  char m_fsog_csv[1024];
+  char m_fot_csv[1024];
   
   s_aws1_mod m_mod;
   s_aws1_ctrl_stat m_ctrl_stat;
@@ -76,6 +86,7 @@ class f_aws1_sim: public f_base
   void get_inst();
 
   void map_stat();
+
  public:
   f_aws1_sim(const char * fname);
   
@@ -94,28 +105,40 @@ class f_aws1_mod: public f_base
   bool m_bwrite_sog_csv;
   bool m_bwrite_ot_csv;
   bool m_binterpolate;
+  bool m_breshape_mod;
   bool m_bverb;
+  bool m_bupdate;
 
   char m_fmod[1024];
   char m_fang_vel_csv[1024];
   char m_fsog_csv[1024];
   char m_fot_csv[1024];
+
+  int m_res_meng;
+  int m_res_rud;
+  int m_max_dstat_rud;
+  int m_max_dstat_meng;
+
   //angular velocity and sog are supposed to be constant with respect to following parameters.
-  float m_max_dang_vel;
+  //float m_max_dang_vel;
   float m_max_dsog;
+  float m_max_dang_vel;
   float m_ref_ang_vel;
   float m_ref_sog;
+  float m_prev_cog;
   
   long long m_ost; //observation start time
-  long long m_th_op; //threshold for a observation period
+  long long m_min_ot; //minimum observation time
+  long long m_prev_t;
 
   s_aws1_mod m_mod;
 
-  s_aws1_ctrl_stat m_ref_ctrl_stat;
+  s_aws1_ctrl_stat m_ref_stat;
 
   ch_aws1_ctrl_stat * m_ch_ctrl_stat;
   ch_state * m_ch_state;
-  
+
+  void reshape_mod();
  public:
   f_aws1_mod(const char * fname);
   

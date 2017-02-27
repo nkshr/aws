@@ -23,84 +23,121 @@ using namespace cv;
 #include "../channel/ch_state.h"
 #include "f_aws1_sim.h"
 
-s_aws1_mod::s_aws1_state::s_aws1_state(): ang_vel(0), sog(0), t(0){
+s_aws1_mod::s_aws1_state::s_aws1_state(): ang_vel(0), sog(0), ot(0){
   
 }
 
-const int s_aws1_mod::res = 256;
-const int s_aws1_mod::num_cells = res*res*res;
-s_aws1_mod::s_aws1_mod(){
+s_aws1_mod::s_aws1_mod(): res_meng(256), res_rud(256){
 }
 
 s_aws1_mod::~s_aws1_mod(){
+  for(int i = 0; i < res_meng; ++i){
+    delete [] table[i];
+  }
   delete [] table;
 }
 
-void s_aws1_mod::get_state(const unsigned char meng, const unsigned char seng, const unsigned char rud){
-  
+s_aws1_mod::s_aws1_state** s_aws1_mod::allocate2d(){
+  s_aws1_state ** tmp = new s_aws1_state*[res_meng];
+  for(int i = 0; i < res_meng; ++i){
+    tmp[i] = new s_aws1_state[res_rud];
+  }
+  return tmp;
 }
 
 void s_aws1_mod::init(){
-  table = new s_aws1_state**[res];
-  for(int i = 0; i < res; ++i){
-    table[i] = new s_aws1_state*[res];
-    for(int j = 0; j < res; ++j){
-      table[i][j] = new s_aws1_state[res];
-    }
+  table = new s_aws1_state*[res_meng];
+  for(int i = 0 ; i < res_meng; ++i){
+    table[i] = new s_aws1_state[res_rud];
   }
 }
 
 
-void s_aws1_mod::update(const unsigned char meng, const unsigned char seng, const unsigned char rud,
-	    const float ang_vel, const float sog, const long long t){
-  s_aws1_state &state = table[meng][seng][rud];
-  float s0 = (float)t / (float)(t + state.t);
+void s_aws1_mod::update(const unsigned char meng,  const unsigned char rud,
+	    const float ang_vel, const float sog, const long long ot){
+  const int mapped_meng = (int)round(((float)meng / 256.f)*(float)(res_meng));
+  const int mapped_rud = (int)round(((float)rud / 256.f)*(float)(res_rud));
+  s_aws1_state &state = table[mapped_meng][mapped_rud];
+  float s0 = (float)ot / (float)(ot + state.ot);
   float s1 = 1.f - s0;
   state.ang_vel = s1 * state.ang_vel + s0 * ang_vel;
   state.sog = s1 * state.sog + s0 * sog;
-  state.t += t;
-  cout << "ang_vel " << state.ang_vel << " sog " << state.sog << " t " << state.t << endl;
+  state.ot += ot;
+  
+  cout << "table[" << mapped_meng << "][" << mapped_rud << "]" << " is updated to ";
+  cout << "ang_vel " << state.ang_vel << " sog " << state.sog << " ot " << state.ot;
+  cout << " by s0 " << s0 << " s1 " << s1 << endl;
 }
 
 void s_aws1_mod::interpolate_table(){
   aws_scope_show ass("interpolate_table");
-  for(int i = 0; i < res; ++i){
-    for(int j = 0; j < res; ++j){
-      for(int k = 0; k < res; ++k){
-	s_aws1_state * state = &table[i][j][k];
-	if(state->t == 0){
-	  const s_aws1_state nstate = get_nearest_cell(i, j, k);
-	  state->ang_vel = nstate.ang_vel;
-	  state->sog = nstate.sog;
-	}
+  for(int i = 0; i < res_meng; ++i){
+    for(int j = 0; j < res_rud; ++j){
+      s_aws1_state * state = &table[i][j];
+      if(state->ot == 0){
+	const s_aws1_state nstate = get_nearest_cell(i, j);
+	state->ang_vel = nstate.ang_vel;
+	state->sog = nstate.sog;
       }
+      
     }
   }
 }
 
-s_aws1_mod::s_aws1_state& s_aws1_mod::get_nearest_cell(const int meng, const int seng, const int rud){
+// void s_aws1_mod::reshape(){
+//   const int prev_res_meng = sizeof(table) / sizeof(s_aws1_mod::s_aws1_state*);
+//   const int prev_res_rud = sizeof(&table[0]) / sizeof(s_aws1_mod::s_aws1_state);
+//   cout << prev_res_meng << ", " << prev_res_rud << " to " << res_meng << ", " << res_rud << endl;
+//   float fx = (float)res_meng/(float)prev_res_meng;
+//   float fy = (float)res_rud/(float)prev_res_rud;
+
+//   s_aws1_state  ** tmp = new s_aws1_state*[res_meng];
+//   for(int i = 0 ; i < res_meng; ++i){
+//     tmp[i] = new s_aws1_state[res_rud];
+//   }
+
+//   for(int i = 0; i < res_meng; ++i){
+//     const int imeng = (int)fx * i;
+//     for(int j = 0; j < res_rud; ++j){
+//       const int irud = j * fy;
+//       tmp[i][j] = table[imeng][irud];
+//     }
+//   }  
+
+//   for(int i = 0; i < res_meng; ++i)
+//     delete [] table[i];
+//   delete [] table;
+
+//   table = tmp;
+// }
+
+void s_aws1_mod::destroy(){
+  for(int i = 0; i < res_meng; ++i){
+    delete [] table[i];
+  }
+  delete [] table;
+}
+
+s_aws1_mod::s_aws1_state& s_aws1_mod::get_nearest_cell(const int meng, const int rud){
   //aws_scope_show ass(__PRETTY_FUNCTION__);
   float dmin = FLT_MAX; //maximum distance
   int min_meng = 0;
-  int min_seng = 0;
   int min_rud = 0;
-  const int res2 = res * res;
-  for(int i = 0; i < res; ++i){
-    for(int j = 0; j < res; ++j){
-      for(int k = 0; k < res; ++k){
-	s_aws1_state * state = &table[i][j][k];
-	float d = FLT_MAX;
-	if(state->t)
-	  d = (float)sqrt(pow(i - meng, 2.0) + pow(j - seng, 2.0) + pow(k - rud, 2.0));
+  for(int i = 0; i < res_meng; ++i){
+    for(int j = 0; j < res_rud; ++j){
+      s_aws1_state * state = &table[i][j];
+      if(state->ot){
+	float d = (float)sqrt(pow(i - meng, 2.0) + pow(j - rud, 2.0));
 	if(d < dmin){
 	  min_meng = i;
-	  min_seng = j;
-	  min_rud = k;
+	  min_rud = j;
+	  dmin = d;
 	}
       }
     }
   }
-  return table[min_meng][min_seng][min_rud];
+  cout << meng << ", " << rud << " is nearest to " << min_meng << ", " <<  min_rud << endl;
+  return table[min_meng][min_rud];
 }
 
 bool s_aws1_mod::read(const char * fname){
@@ -109,14 +146,12 @@ bool s_aws1_mod::read(const char * fname){
     return false;
 
   int sz = 0;
-  for(int i = 0; i < res; ++i){
-    for(int j = 0; j < res; ++j){
-      for(int k = 0; k < res; ++k){
-	s_aws1_state * state = &table[i][j][k];
-	sz += fread(&(state->ang_vel), sizeof(float), 1, pf);
-	sz += fread(&(state->sog), sizeof(float), 1, pf);
-	sz += fread(&(state->t), sizeof(long long), 1, pf);      
-      }
+  for(int i = 0; i < res_meng; ++i){
+    for(int j = 0; j < res_rud; ++j){
+      s_aws1_state * state = &table[i][j];
+      sz += fread(&(state->ang_vel), sizeof(float), 1, pf);
+      sz += fread(&(state->sog), sizeof(float), 1, pf);
+      sz += fread(&(state->ot), sizeof(long long), 1, pf);      
     }
   }
   fclose(pf);
@@ -128,32 +163,34 @@ bool s_aws1_mod::write(const char * fname){
     return false;
   
   int sz = 0;
-  for(int i = 0; i < res; ++i){
-    for(int j = 0; j < res; ++j){
-      for(int k = 0; k < res; ++k){
-	s_aws1_state * state = &table[i][j][k];
-	sz += fwrite(&(state->ang_vel), sizeof(float), 1, pf);
-	sz += fwrite(&(state->sog), sizeof(float), 1, pf);
-	sz += fwrite(&(state->t), sizeof(long long), 1, pf);      
-      }
+  for(int i = 0; i < res_meng; ++i){
+    for(int j = 0; j < res_rud; ++j){
+      s_aws1_state * state = &table[i][j];
+      sz += (fwrite(&(state->ang_vel), sizeof(float), 1, pf)) * sizeof(float);
+      sz += fwrite(&(state->sog), sizeof(float), 1, pf) * sizeof(float);
+      sz += fwrite(&(state->ot), sizeof(long long), 1, pf) * sizeof(long long);      
     }
   }
 
   fclose(pf);
-  if(sz != sizeof(s_aws1_state)*pow(res, 3.0))
+  const int esz = (sizeof(float)+ sizeof(float) + sizeof(long long)) * res_meng * res_rud;
+  if(sz != esz){
+    cerr << __PRETTY_FUNCTION__ << "\n";
+    cerr << "Error : total size of model written is " << sz << ", but expected size is " << esz << endl;
     return false;
+  }
   return true;
 }
 
-bool s_aws1_mod::write_sog_csv(const char * fname, const unsigned char seng){
+bool s_aws1_mod::write_sog_csv(const char * fname){
   ofstream ofs(fname);
   if(!ofs.good()){
     return false;
   }
 
-  for(int i = 0; i < res; ++i){
-    for(int j = 0; j < res; ++j){
-      ofs << table[i][seng][j].sog << ",";
+  for(int i = 0; i < res_meng; ++i){
+    for(int j = 0; j < res_rud; ++j){
+      ofs << table[i][j].sog << ",";
     }
     ofs << endl;
   }
@@ -161,15 +198,15 @@ bool s_aws1_mod::write_sog_csv(const char * fname, const unsigned char seng){
   return true;
 }
 
-bool s_aws1_mod::write_ang_vel_csv(const char * fname, const unsigned char seng){
+bool s_aws1_mod::write_ang_vel_csv(const char * fname){
   ofstream ofs(fname);
   if(!ofs.good()){
     return false;
   }
 
-  for(int i = 0; i < res; ++i){
-    for(int j = 0; j < res; ++j){
-      ofs << table[i][seng][j].ang_vel << ",";
+  for(int i = 0; i < res_meng; ++i){
+    for(int j = 0; j < res_rud; ++j){
+      ofs << table[i][j].ang_vel << ",";
     }
     ofs << endl;
   }
@@ -177,20 +214,27 @@ bool s_aws1_mod::write_ang_vel_csv(const char * fname, const unsigned char seng)
   return true;
 }
 
-bool s_aws1_mod::write_ot_csv(const char * fname, const unsigned char seng){
+bool s_aws1_mod::write_ot_csv(const char * fname){
   ofstream ofs(fname);
   if(!ofs.good()){
     return false;
   }
 
-  for(int i = 0; i < res; ++i){
-    for(int j = 0; j < res; ++j){
-      ofs << table[i][seng][j].t << ",";
+  for(int i = 0; i < res_meng; ++i){
+    for(int j = 0; j < res_rud; ++j){
+      ofs << table[i][j].ot << ",";
     }
     ofs << endl;
   }
   ofs.close();
   return true;
+}
+
+s_aws1_mod::s_aws1_state s_aws1_mod::get_state(const unsigned char  meng, const unsigned char rud){
+  const float smeng = 256.f / (float)res_meng;
+  const float srud = 256.f / (float)res_rud;
+  const int imeng = (int)round(smeng * meng);
+  const int irud = (int)round(srud * rud);
 }
 
 void f_aws1_sim::get_inst()
@@ -250,7 +294,16 @@ void f_aws1_sim::map_stat()
 			    m_ctrl_stat.seng_nub, m_ctrl_stat.seng_min);
 }
 
-f_aws1_sim::f_aws1_sim(const char * fname): f_base(fname){
+f_aws1_sim::f_aws1_sim(const char * fname): f_base(fname), m_bwrite_ang_vel_csv(false), m_bwrite_sog_csv(false), m_bwrite_ot_csv(false), m_binterpolate(false){
+  register_fpar("write_ang_vel_csv", &m_bwrite_ang_vel_csv, "Write angular velocity csv.");
+  register_fpar("write_sog_csv", &m_bwrite_sog_csv, "Write sog csv.");
+  register_fpar("write_ot_csv", &m_bwrite_ot_csv, "Write observation time csv.");
+
+  register_fpar("mod", m_fmod, 1023, "Model file.");
+  register_fpar("sog_csv", m_fsog_csv, 1023, "csv file of sog.");
+  register_fpar("ang_vel_csv", m_fang_vel_csv, 1023, "csv file of angular velocity.");
+  register_fpar("ot_csv", m_fot_csv, 1023, "csv file of observation time."); 
+
 }
 
 bool f_aws1_sim::init_run(){
@@ -269,17 +322,63 @@ bool f_aws1_sim::proc(){
     cerr << "Error : ch_state is not specified." << endl;
     return false;
   }
+
+  if(m_bwrite_sog_csv){
+    cout << __PRETTY_FUNCTION__ << "\n";
+    cout << "Writing sog to " << m_fsog_csv << endl;
+    bool success = m_mod.write_sog_csv(m_fsog_csv);
+    if(!success){
+      cerr << __PRETTY_FUNCTION__ << "\n";
+      cerr << "Error : Couldn't write " << m_fsog_csv << endl;
+      return false;
+    }
+    else{
+      cout << m_fsog_csv << " was written." << endl;
+    }
+
+    m_bwrite_sog_csv = false;
+  }
+  
+  if(m_bwrite_ang_vel_csv){
+    cout << __PRETTY_FUNCTION__ << "\n";
+    cout << "Writing angular velocity to " << m_fang_vel_csv << endl;    
+    bool success = m_mod.write_ang_vel_csv(m_fang_vel_csv);
+    if(!success){
+      cerr << __PRETTY_FUNCTION__ << "\n";
+      cerr << "Error : Couldn't write " << m_fang_vel_csv << endl;
+      return false;
+    }
+    else{
+      cout << m_fang_vel_csv << " was written." << endl;
+    }
+
+    m_bwrite_ang_vel_csv = false;
+  }
+
+  if(m_bwrite_ot_csv){
+    cout << __PRETTY_FUNCTION__ << "\n";
+    cout << "Writing observation time to " << m_fsog_csv << endl;    
+    bool success = m_mod.write_ot_csv(m_fot_csv);
+    if(!success){
+      cerr << __PRETTY_FUNCTION__ << "\n";
+      cerr << "Error : Couldn't write " << m_fot_csv << endl;
+      return false;
+    }
+    else{
+      cout << m_fot_csv << " was written." << endl;
+    }
+
+    m_bwrite_ot_csv = false;
+  }
+
   
   get_inst();
   map_stat();
-  s_aws1_mod::s_aws1_state * state = &m_mod.table[m_ctrl_stat.meng_aws][m_ctrl_stat.seng_aws][m_ctrl_stat.rud_aws];
-
+  s_aws1_mod::s_aws1_state  state = m_mod.get_state(m_ctrl_stat.meng_aws, m_ctrl_stat.rud_aws);
   
-  float ang_vel = state->ang_vel;
-  float sog = state->sog;
   long long t = get_time();
 
-  m_ch_state->set_velocity(ang_vel, sog, t);
+  m_ch_state->set_velocity(state.ang_vel, state.sog, t);
   
   return true;
 }
@@ -287,34 +386,66 @@ bool f_aws1_sim::proc(){
 void f_aws1_sim::destroy_run(){
 }
 
-f_aws1_mod::f_aws1_mod(const char * fname): f_base(fname), m_bwrite_mod(false), m_bwrite_ang_vel_csv(false), m_bwrite_sog_csv(false),  m_bwrite_ot_csv(false), m_binterpolate(false), m_bverb(false), m_max_dcog(1.f), m_max_dsog(1.f), m_ref_cog(0.f), m_ref_sog(-0.f), m_th_op(10){
+void f_aws1_mod::reshape_mod(){
+  aws_scope_show(__PRETTY_FUNCTION__);
+  s_aws1_mod tmp;
+  tmp.res_meng = m_mod.res_meng;
+  tmp.res_rud = m_mod.res_rud;
+  tmp.table = m_mod.table;
+
+  m_mod.res_meng  = m_res_meng;
+  m_mod.res_rud = m_res_rud;
+  m_mod.init();
+  const float smeng = (float)tmp.res_meng/(float)m_res_meng;
+  const float srud = (float)tmp.res_rud/(float)m_res_rud;
+  for(int i = 0; i < m_res_meng; ++i){
+    const int imeng = (int)floor(smeng * (float)i);
+    for(int j = 0; j < m_res_rud; ++j){
+      const int irud = (int)floor(srud * (float)j);
+      cout << imeng << ", " << irud << " is assigned to " << i << ", " << j << endl;
+      m_mod.table[i][j] = tmp.table[imeng][irud];
+    }
+  }
+  //tmp.destroy();
+}
+
+f_aws1_mod::f_aws1_mod(const char * fname): f_base(fname), m_bwrite_mod(false), m_bwrite_ang_vel_csv(false), m_bwrite_sog_csv(false),  m_bwrite_ot_csv(false), m_binterpolate(false), m_breshape_mod(false), m_bverb(false), m_bupdate(false), m_res_meng(10), m_res_rud(10), m_max_dsog(1.f), m_max_dang_vel(1.f), m_ref_sog(-0.f), m_prev_cog(1.f),  m_ost(LLONG_MAX), m_min_ot(10){
   register_fpar("write_mod", &m_bwrite_mod, "Write a model.");
+  register_fpar("write_ang_vel_csv", &m_bwrite_ang_vel_csv, "Write angular velocity csv.");
   register_fpar("write_sog_csv", &m_bwrite_sog_csv, "Write sog csv.");
-  register_fpar("write_cog_csv", &m_bwrite_cog_csv, "Write cog csv.");
   register_fpar("write_ot_csv", &m_bwrite_ot_csv, "Write observation time csv.");
   register_fpar("interpolate", &m_binterpolate, "Interpolate a table of model.");
+  register_fpar("reshape_mod", &m_breshape_mod, "Reshape a model.");
   register_fpar("verb", &m_bverb, "Enable verbose (default n).");
+  register_fpar("update", &m_bupdate, "Enable updating a model (default n).");
+
   register_fpar("mod", m_fmod, 1023, "Model file.");
   register_fpar("sog_csv", m_fsog_csv, 1023, "csv file of sog.");
-  register_fpar("cog_csv", m_fcog_csv, 1023, "csv file of cog.");
+  register_fpar("ang_vel_csv", m_fang_vel_csv, 1023, "csv file of angular velocity.");
   register_fpar("ot_csv", m_fot_csv, 1023, "csv file of observation time."); 
-  register_fpar("max_dcog", &m_max_dcog, "Maximum difference of cog (default 1.f).");
+  register_fpar("res_meng", &m_res_meng, "Resolution fo main engine (default 1.f).");
+  register_fpar("res_rud", &m_res_rud, "Resolution of rudder (default 1.f).");
+ 
+  register_fpar("max_dang_vel", &m_max_dang_vel, "Maximum differece of angular velocitiy (default 1.f).");
   register_fpar("max_dsog", &m_max_dsog, "Maximum difference of sog (default 1.f).");
-
-  register_fpar("m_th_op", &m_th_op, "Threshold for accepting data.");
+ 
+  register_fpar("min_ot", &m_min_ot, "Minimum ovservation time for accepting data.");
 
   register_fpar("ch_ctrl_stat", (ch_base**)&m_ch_ctrl_stat, typeid(ch_aws1_ctrl_stat).name(), "Control state channel.");
   register_fpar("ch_state", (ch_base**)&m_ch_state, typeid(ch_state).name(), "State channel");
+  m_max_dstat_rud = 256 / m_res_meng;
+  m_max_dstat_meng = 256 / m_res_rud;
 }
 
 bool f_aws1_mod::init_run(){
   //read model from a file specified by m_fmod.
+  m_mod.res_meng = m_res_meng;
+  m_mod.res_rud = m_res_rud;
   m_mod.init();
   if(m_mod.read(m_fmod)){
     cerr << "model is read from  " << m_fmod << "." << endl;
   }
   
-  m_ost = get_time();
   return true;
 }
 
@@ -332,6 +463,11 @@ bool f_aws1_mod::proc(){
   if(m_binterpolate){
     m_mod.interpolate_table();
     m_binterpolate = false;
+  }
+
+  if(m_breshape_mod){
+    reshape_mod();
+    m_breshape_mod = false;
   }
 
   //write out a model
@@ -355,7 +491,7 @@ bool f_aws1_mod::proc(){
   if(m_bwrite_sog_csv){
     cout << __PRETTY_FUNCTION__ << "\n";
     cout << "Writing sog to " << m_fsog_csv << endl;
-    bool success = m_mod.write_sog_csv(m_fsog_csv, 0);
+    bool success = m_mod.write_sog_csv(m_fsog_csv);
     if(!success){
       cerr << __PRETTY_FUNCTION__ << "\n";
       cerr << "Error : Couldn't write " << m_fsog_csv << endl;
@@ -371,7 +507,7 @@ bool f_aws1_mod::proc(){
   if(m_bwrite_ang_vel_csv){
     cout << __PRETTY_FUNCTION__ << "\n";
     cout << "Writing angular velocity to " << m_fang_vel_csv << endl;    
-    bool success = m_mod.write_ang_vel_csv(m_fang_vel_csv, 0);
+    bool success = m_mod.write_ang_vel_csv(m_fang_vel_csv);
     if(!success){
       cerr << __PRETTY_FUNCTION__ << "\n";
       cerr << "Error : Couldn't write " << m_fang_vel_csv << endl;
@@ -387,7 +523,7 @@ bool f_aws1_mod::proc(){
   if(m_bwrite_ot_csv){
     cout << __PRETTY_FUNCTION__ << "\n";
     cout << "Writing observation time to " << m_fsog_csv << endl;    
-    bool success = m_mod.write_ot_csv(m_fot_csv, 0);
+    bool success = m_mod.write_ot_csv(m_fot_csv);
     if(!success){
       cerr << __PRETTY_FUNCTION__ << "\n";
       cerr << "Error : Couldn't write " << m_fot_csv << endl;
@@ -404,23 +540,33 @@ bool f_aws1_mod::proc(){
   long long t;
   float cog, sog;
   m_ch_state->get_velocity(t, cog, sog);
+  if(t == m_prev_t){
+    return true;
+  }
 
-  if(abs(m_ref_ctrl_stat.rud - stat.rud) ||
-     abs(m_ref_ctrl_stat.meng - stat.meng) || 
-     abs(m_ref_ctrl_stat.seng - stat.seng) ||
-     abs(m_ref_cog - cog) > m_max_dcog || 
-     abs(m_ref_sog - sog) > m_max_dsog){
+  float ang_vel = ((cog - m_prev_cog) /(float)((t-m_prev_t)/10000000.f));
+  if((abs(m_ref_stat.rud - stat.rud)  > m_max_dstat_rud ||
+     abs(m_ref_stat.meng - stat.meng) > m_max_dstat_meng || 
+     abs(m_ref_ang_vel - ang_vel) > m_max_dang_vel || 
+     abs(m_ref_sog - sog) > m_max_dsog)){
   //update a model by a current status, if observation period is longer than a certain threshold.
     long long diff = t - m_ost;
-    if(diff > m_th_op){
+    if(diff > m_min_ot){
       if(m_bverb){
-	cout << "ot " <<  (int)diff << " meng " << (int)stat.meng << " seng " << (int)stat.seng << " rud " << (int)stat.rud << " cog " << (int)cog << " sog " << (int)sog << endl;
+	cout << "ot " <<  diff << " meng " << (int)stat.meng << " rud " << (int)stat.rud << " ang_vel " << ang_vel << " sog " << (int)sog << endl;
       }
-      m_mod.update(stat.meng, 0, stat.rud, cog, sog, diff);
+      
+      if(m_bupdate)
+	m_mod.update(stat.meng, stat.rud, ang_vel, sog, diff);
     }
+
     m_ost = t;
-    m_ref_ctrl_stat = stat;
+    m_ref_stat = stat;
+    m_ref_ang_vel = ang_vel;
   }
+  
+  m_prev_t = t;
+  m_prev_cog = cog;
   return true;
 }
 
