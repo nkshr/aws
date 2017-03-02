@@ -72,7 +72,17 @@ class f_aws1_sim: public f_base
   char m_fang_vel_csv[1024];
   char m_fsog_csv[1024];
   char m_fot_csv[1024];
+
+  float m_lat;
+  float m_lon;
+  float m_alt;
+  float m_galt;
+  float m_cog;
   
+  long long m_prev_t;
+  Mat m_Xorg;
+  Mat m_Rwrld;
+
   s_aws1_mod m_mod;
   s_aws1_ctrl_stat m_ctrl_stat;
 

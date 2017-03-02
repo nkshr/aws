@@ -63,7 +63,6 @@ void s_aws1_mod::update(const unsigned char meng,  const unsigned char rud,
   state.ang_vel = s1 * state.ang_vel + s0 * ang_vel;
   state.sog = s1 * state.sog + s0 * sog;
   state.ot += ot;
-  
   cout << "table[" << mapped_meng << "][" << mapped_rud << "]" << " is updated to ";
   cout << "ang_vel " << state.ang_vel << " sog " << state.sog << " ot " << state.ot;
   cout << " by s0 " << s0 << " s1 " << s1 << endl;
@@ -294,7 +293,9 @@ void f_aws1_sim::map_stat()
 			    m_ctrl_stat.seng_nub, m_ctrl_stat.seng_min);
 }
 
-f_aws1_sim::f_aws1_sim(const char * fname): f_base(fname), m_bwrite_ang_vel_csv(false), m_bwrite_sog_csv(false), m_bwrite_ot_csv(false), m_binterpolate(false){
+f_aws1_sim::f_aws1_sim(const char * fname): f_base(fname), m_bwrite_ang_vel_csv(false), m_bwrite_sog_csv(false), m_bwrite_ot_csv(false), m_binterpolate(false), m_lat(0.f), m_lon(0.f), m_alt(100.f), m_galt(100.f){
+  m_Xorg = Mat::zeros(3, 1, CV_32F);
+  float * pm_Xorg = m_Xorg.ptr<float>(0);
   register_fpar("write_ang_vel_csv", &m_bwrite_ang_vel_csv, "Write angular velocity csv.");
   register_fpar("write_sog_csv", &m_bwrite_sog_csv, "Write sog csv.");
   register_fpar("write_ot_csv", &m_bwrite_ot_csv, "Write observation time csv.");
@@ -304,6 +305,11 @@ f_aws1_sim::f_aws1_sim(const char * fname): f_base(fname), m_bwrite_ang_vel_csv(
   register_fpar("ang_vel_csv", m_fang_vel_csv, 1023, "csv file of angular velocity.");
   register_fpar("ot_csv", m_fot_csv, 1023, "csv file of observation time."); 
 
+  register_fpar("lat", &m_lat, "Initial latitude (default 0)");
+  register_fpar("lon", &m_lon, "Initial longitude (default 0)");
+  register_fpar("alt", &m_alt, "Initial altitude (default 100)");
+  register_fpar("galt", &m_galt, "Initial altitude (default 100)");
+  register_fpar("cog", &m_cog, "Initial cog");
 }
 
 bool f_aws1_sim::init_run(){
@@ -313,6 +319,11 @@ bool f_aws1_sim::init_run(){
     cerr << "Error : Couldn't read " << m_fmod << "." << endl;
     return false;
   }
+
+  float * pm_Xorg = m_Xorg.ptr<float>(0);
+  bihtoecef(m_lat, m_lon, m_alt, pm_Xorg[0], pm_Xorg[1], pm_Xorg[2]);
+  getwrldrot(m_lat, m_lon, m_Rwrld);
+  m_prev_t = get_time();
   return true;
 }
 
@@ -377,9 +388,27 @@ bool f_aws1_sim::proc(){
   s_aws1_mod::s_aws1_state  state = m_mod.get_state(m_ctrl_stat.meng_aws, m_ctrl_stat.rud_aws);
   
   long long t = get_time();
-
-  m_ch_state->set_velocity(state.ang_vel, state.sog, t);
+  long long tdiff = t - m_prev_t;
+  m_prev_t = t;
+  m_cog += state.ang_vel * (tdiff / 10000000.f);
+  if(m_cog > 360.f)
+    m_cog -= 360.f;
   
+  if(m_cog < 0.f)
+    m_cog += 360.f;
+  
+  m_ch_state->set_velocity(m_cog, state.sog, t);
+  
+  Mat Xwrld(3, 1, CV_32F);
+  float * pXwrld = Xwrld.ptr<float>(0);
+  pXwrld[0] = state.sog * 1852.f / (float)(t / 10000000.f);
+  pXwrld[1] = pXwrld[0] * sin(m_cog);
+  pXwrld[0] *= cos(m_cog);
+  
+  Mat Xbin(3, 1, CV_32F);
+  wrldtobih(m_Xorg, m_Rwrld, Xwrld, Xbin);
+  float * pXbin = Xbin.ptr<float>(0);
+  m_ch_state->set_position(t, pXbin[0], pXbin[1], pXbin[2], pXbin[3]);
   return true;
 }
 
@@ -439,13 +468,20 @@ f_aws1_mod::f_aws1_mod(const char * fname): f_base(fname), m_bwrite_mod(false), 
 
 bool f_aws1_mod::init_run(){
   //read model from a file specified by m_fmod.
-  m_mod.res_meng = m_res_meng;
-  m_mod.res_rud = m_res_rud;
-  m_mod.init();
   if(m_mod.read(m_fmod)){
     cerr << "model is read from  " << m_fmod << "." << endl;
+    m_res_meng = m_mod.res_meng;
+    m_res_rud = m_mod.res_rud;
   }
-  
+  else{
+    m_mod.res_meng = m_res_meng;
+    m_mod.res_rud = m_res_rud;
+    m_mod.init();
+  }
+  m_max_dstat_rud = 256 / m_res_meng;
+  m_max_dstat_meng = 256 / m_res_rud;
+  cout << m_max_dstat_rud << endl;
+  cout << m_max_dstat_meng << endl;
   return true;
 }
 
@@ -467,6 +503,8 @@ bool f_aws1_mod::proc(){
 
   if(m_breshape_mod){
     reshape_mod();
+    m_max_dstat_rud = 256 / m_res_meng;
+    m_max_dstat_meng = 256 / m_res_rud;
     m_breshape_mod = false;
   }
 
@@ -545,23 +583,30 @@ bool f_aws1_mod::proc(){
   }
 
   float ang_vel = ((cog - m_prev_cog) /(float)((t-m_prev_t)/10000000.f));
+  if(ang_vel > 180.f){
+    ang_vel = cog + 360.f - m_prev_cog;
+  }
+  if(m_bverb){
+    cout <<  "meng " << (int)stat.meng << " rud " << (int)stat.rud << " ang_vel " << ang_vel << " sog " << sog << endl;
+  }
+
   if((abs(m_ref_stat.rud - stat.rud)  > m_max_dstat_rud ||
      abs(m_ref_stat.meng - stat.meng) > m_max_dstat_meng || 
      abs(m_ref_ang_vel - ang_vel) > m_max_dang_vel || 
      abs(m_ref_sog - sog) > m_max_dsog)){
   //update a model by a current status, if observation period is longer than a certain threshold.
     long long diff = t - m_ost;
+    if(m_bverb){
+      cout << "ot " <<  diff << endl;
+    }
     if(diff > m_min_ot){
-      if(m_bverb){
-	cout << "ot " <<  diff << " meng " << (int)stat.meng << " rud " << (int)stat.rud << " ang_vel " << ang_vel << " sog " << (int)sog << endl;
-      }
-      
       if(m_bupdate)
-	m_mod.update(stat.meng, stat.rud, ang_vel, sog, diff);
+	m_mod.update(stat.meng, stat.rud, m_ref_ang_vel, m_ref_sog, diff);
     }
 
     m_ost = t;
     m_ref_stat = stat;
+    m_ref_sog = sog;
     m_ref_ang_vel = ang_vel;
   }
   
