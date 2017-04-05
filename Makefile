@@ -219,7 +219,7 @@ endif
 ######################################################## f_caffe configuration
 
 ifeq ($(CAFFE),y)
-	MODS += caffe_proto
+	#MODS += caffe_proto
 	CAFFE_PROTO_OBJ = $(addprefix $(CAFFE_PROTO_DIR)/, $(addsuffix .o,$(CAFFE_PROTO)))
 	FILTER += f_caffe
 	UTIL += selective_search selective_search_edge selective_search_vertex
@@ -228,8 +228,8 @@ ifeq ($(CAFFE),y)
 	LIB += -L$(LIB_BOOST_DIR) -lboost_system -lboost_thread -lboost_filesystem -lboost_chrono -lboost_date_time -lboost_atomic
 	DEFS += -DDNN
 
-	CAFFE_PROTO = caffe.pb
-	CAFFE_PROTO_DIR = $(INC_CAFFE_DIR)/caffe/proto
+	#CAFFE_PROTO = caffe.pb
+	#CAFFE_PROTO_DIR = $(INC_CAFFE_DIR)/caffe/proto
 endif
 
 ################################################ Board specific linker options

@@ -23,9 +23,13 @@ struct s_aws1_mod{
   int res_rud;
 
   struct s_aws1_state{
-    float ang_vel;  //angular velocity  over ground
+    float ang_vel; //angular velocity  over ground
+    float xsog; //
+    float ysog; //
+    float zsog; //
+
     float sog; //speed over ground
-    long long ot; //observation time 
+    float ot; //observation time 
 
     s_aws1_state();
     //s_aws1_state(const s_aws1_state &state) = delete;
@@ -41,9 +45,10 @@ struct s_aws1_mod{
   void init();
 
   void update(const unsigned char meng, const unsigned char rud,
-	      const float ang_vel, const float sog, const long long ot);
-
-  void interpolate_table();
+	      const float ang_vel, const float xsog, const float ysog,
+	      const float ot);
+  
+void interpolate_table();
   s_aws1_state& get_nearest_cell(const int meng, const int rud);
 
   //void reshape();
@@ -131,12 +136,17 @@ class f_aws1_mod: public f_base
 
   //angular velocity and sog are supposed to be constant with respect to following parameters.
   //float m_max_dang_vel;
+  float m_max_dcourse;
   float m_max_dsog;
   float m_max_dang_vel;
   float m_ref_ang_vel;
   float m_ref_sog;
   float m_prev_cog;
-  
+  float m_prev_lat, m_prev_lon, m_prev_alt, m_prev_galt;
+  float m_prev_xecef, m_prev_yecef, m_prev_zecef;
+  float m_prev_xwrld, m_prev_ywrld, m_prev_zwrld;
+  float m_ref_xsog, m_ref_ysog, m_ref_zsog;
+
   long long m_ost; //observation start time
   long long m_min_ot; //minimum observation time
   long long m_prev_t;

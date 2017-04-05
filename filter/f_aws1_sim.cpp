@@ -23,7 +23,7 @@ using namespace cv;
 #include "../channel/ch_state.h"
 #include "f_aws1_sim.h"
 
-s_aws1_mod::s_aws1_state::s_aws1_state(): ang_vel(0), sog(0), ot(0){
+s_aws1_mod::s_aws1_state::s_aws1_state(): ang_vel(0.f), xsog(0.f), ysog(0.f), zsog(0.f), sog(0), ot(0){
   
 }
 
@@ -52,20 +52,18 @@ void s_aws1_mod::init(){
   }
 }
 
-
-void s_aws1_mod::update(const unsigned char meng,  const unsigned char rud,
-	    const float ang_vel, const float sog, const long long ot){
+void s_aws1_mod::update(const unsigned char meng, const unsigned char rud,
+			const float ang_vel, const float xsog, const float ysog,
+			const float ot){
   const int mapped_meng = (int)round(((float)meng / 256.f)*(float)(res_meng));
   const int mapped_rud = (int)round(((float)rud / 256.f)*(float)(res_rud));
   s_aws1_state &state = table[mapped_meng][mapped_rud];
   float s0 = (float)ot / (float)(ot + state.ot);
   float s1 = 1.f - s0;
   state.ang_vel = s1 * state.ang_vel + s0 * ang_vel;
-  state.sog = s1 * state.sog + s0 * sog;
-  state.ot += ot;
-  cout << "table[" << mapped_meng << "][" << mapped_rud << "]" << " is updated to ";
-  cout << "ang_vel " << state.ang_vel << " sog " << state.sog << " ot " << state.ot;
-  cout << " by s0 " << s0 << " s1 " << s1 << endl;
+  state.xsog = s1 * state.xsog + s0 * xsog;
+  state.ysog = s1 * state.ysog + s0 * ysog;
+  cout << "table[" << mapped_meng << "][" << mapped_rud << "}" << " is updated to ang_vel " << state.ang_vel << " xsog " << state.xsog << " ysog " << state.ysog << " s0 " << s0 << " s1 " << s1 << endl;
 }
 
 void s_aws1_mod::interpolate_table(){
@@ -189,10 +187,27 @@ bool s_aws1_mod::write_sog_csv(const char * fname){
 
   for(int i = 0; i < res_meng; ++i){
     for(int j = 0; j < res_rud; ++j){
-      ofs << table[i][j].sog << ",";
+      ofs << table[i][j].xsog << ",";
     }
     ofs << endl;
   }
+  ofs << endl;
+
+  for(int i = 0; i < res_meng; ++i){
+    for(int j = 0; j < res_rud; ++j){
+      ofs << table[i][j].ysog << ",";
+    }
+    ofs << endl;
+  }
+  ofs << endl;
+
+  for(int i = 0; i < res_meng; ++i){
+    for(int j = 0; j < res_rud; ++j){
+      ofs << table[i][j].zsog << ",";
+    }
+    ofs << endl;
+  }
+  ofs << endl;
   ofs.close();
   return true;
 }
@@ -438,7 +453,7 @@ void f_aws1_mod::reshape_mod(){
   //tmp.destroy();
 }
 
-f_aws1_mod::f_aws1_mod(const char * fname): f_base(fname), m_bwrite_mod(false), m_bwrite_ang_vel_csv(false), m_bwrite_sog_csv(false),  m_bwrite_ot_csv(false), m_binterpolate(false), m_breshape_mod(false), m_bverb(false), m_bupdate(false), m_res_meng(10), m_res_rud(10), m_max_dsog(1.f), m_max_dang_vel(1.f), m_ref_sog(-0.f), m_prev_cog(1.f),  m_ost(LLONG_MAX), m_min_ot(10){
+f_aws1_mod::f_aws1_mod(const char * fname): f_base(fname), m_bwrite_mod(false), m_bwrite_ang_vel_csv(false), m_bwrite_sog_csv(false),  m_bwrite_ot_csv(false), m_binterpolate(false), m_breshape_mod(false), m_bverb(false), m_bupdate(false), m_res_meng(10), m_res_rud(10), m_max_dcourse(5.f), m_max_dsog(1.f), m_max_dang_vel(1.f), m_ref_sog(-0.f), m_prev_cog(1.f), m_prev_xecef(0.f), m_prev_yecef(0.f), m_prev_zecef(0.f), m_ost(0.f), m_min_ot(10){
   register_fpar("write_mod", &m_bwrite_mod, "Write a model.");
   register_fpar("write_ang_vel_csv", &m_bwrite_ang_vel_csv, "Write angular velocity csv.");
   register_fpar("write_sog_csv", &m_bwrite_sog_csv, "Write sog csv.");
@@ -576,42 +591,73 @@ bool f_aws1_mod::proc(){
   
   //A observation period is increased while control instruction and status are almost the same. Otherwise observation start time is set to 0;
   long long t;
-  float cog, sog;
-  m_ch_state->get_velocity(t, cog, sog);
-  if(t == m_prev_t){
-    return true;
-  }
+  float lat, lon, alt, galt;
+  float xecef, yecef, zecef;
+  Mat Renu;
+  m_ch_state->get_position(t, lat, lon, alt, galt, xecef, yecef, zecef, Renu);
+  float ot = (t - m_ost) / 10000000.f;
+  if(ot > m_min_ot){
+    float xsog, ysog, zsog;
+    eceftowrld(Renu, 
+	       m_prev_xecef, m_prev_yecef, m_prev_zecef, 
+	       xecef, yecef, zecef, xsog, ysog, zsog);
 
-  float ang_vel = ((cog - m_prev_cog) /(float)((t-m_prev_t)/10000000.f));
-  if(ang_vel > 180.f){
-    ang_vel = cog + 360.f - m_prev_cog;
-  }
-  if(m_bverb){
-    cout <<  "meng " << (int)stat.meng << " rud " << (int)stat.rud << " ang_vel " << ang_vel << " sog " << sog << endl;
-  }
+    float cog, sog;
+    m_ch_state->get_velocity(t, cog, sog);
+    sog = sqrt(xsog*xsog + ysog * ysog);
+    float dsog = m_ref_sog - sog;
 
-  if((abs(m_ref_stat.rud - stat.rud)  > m_max_dstat_rud ||
-     abs(m_ref_stat.meng - stat.meng) > m_max_dstat_meng || 
-     abs(m_ref_ang_vel - ang_vel) > m_max_dang_vel || 
-     abs(m_ref_sog - sog) > m_max_dsog)){
-  //update a model by a current status, if observation period is longer than a certain threshold.
-    long long diff = t - m_ost;
-    if(m_bverb){
-      cout << "ot " <<  diff << endl;
+    float dcourse = 
+      acos((m_ref_xsog * xsog + m_ref_ysog * ysog) / (m_ref_sog* sog));
+    dcourse = (180.f * dcourse) / CV_PI;
+    
+    if(abs(m_ref_sog) < DBL_EPSILON || abs(sog) < DBL_EPSILON){
+      dcourse = FLT_MAX;
     }
-    if(diff > m_min_ot){
+    
+    float ang_vel = (cog - m_prev_cog) / ot;
+    if(abs(ang_vel) > 180.f){
+      if(ang_vel < 0.f)
+	ang_vel = cog + 360.f - m_prev_cog;
+      else
+	ang_vel = -(360.f - cog + m_prev_cog);
+    }
+
+    float drud = abs(m_ref_stat.rud - stat.rud);
+    float dmeng = abs(m_ref_stat.meng - stat.meng);
+    if(m_bverb){
+      cout <<  "cog " << cog << " meng " << (int)stat.meng << " rud " << (int)stat.rud << " ot " << ot << endl;
+      cout << " ang_vel " << ang_vel << " sog " << sog << " xsog " << xsog << " ysog " << ysog << " zsog " << zsog << endl;
+      cout << " xecef "<< xecef << " yecef " << yecef << " zecef " << zecef << " dcourse " << dcourse << " dsog " << dsog << endl;
+      cout << " drud " << drud << " dmeng " << dmeng << endl;
+    }
+
+    if(drud  < m_max_dstat_rud &&
+       dmeng < m_max_dstat_meng && 
+       abs(m_ref_ang_vel - ang_vel) < m_max_dang_vel && 
+       abs(dcourse) < m_max_dcourse &&
+       abs(dsog) < m_max_dsog){
+      //update a model by a current status, if observation period is longer than a certain threshold.
+      
       if(m_bupdate)
-	m_mod.update(stat.meng, stat.rud, m_ref_ang_vel, m_ref_sog, diff);
+	  m_mod.update(stat.meng, stat.rud, ang_vel, xsog, ysog, ot);
     }
 
     m_ost = t;
     m_ref_stat = stat;
-    m_ref_sog = sog;
     m_ref_ang_vel = ang_vel;
+
+    m_ref_xsog = xsog;
+    m_ref_ysog = ysog;
+    m_ref_zsog = zsog;
+    m_ref_sog = sog;
+
+    m_prev_cog = cog;
+
+    m_prev_xecef = xecef;
+    m_prev_yecef = yecef;
+    m_prev_zecef = zecef;
   }
-  
-  m_prev_t = t;
-  m_prev_cog = cog;
   return true;
 }
 
